@@ -1,0 +1,409 @@
+import os
+import re
+import sys
+import copy
+from Utilities import OffsetMap
+from Utilities import DocumentBlock
+
+from snowballstemmer import english_stemmer
+strBasePath = "C:\\Users\\Vardhman\\Downloads\\AP89_DATA\\AP_DATA"
+docBasePath = strBasePath + "\\" + "ap89_collection"
+outPath = "C:\\Users\\Vardhman\\Downloads\\AP89_DATA\\AP_DATA\\hw2"
+# Four values - DEFAULT (All terms) ; STOPONLY (Only Stop words removed) ; STEMONLY (Only Stemmed) ; STEMNSTOP (Both Stemmed and Stop words removed)
+MODE = "STEMNSTOP"
+FL_CURRENT_INVERTED_INDEX = MODE + "_" + "currentindex.txt"
+FL_INVERTED_INDEX = MODE+ "_" + "index.txt"
+FL_INVERTED_INDEX_TEMP = MODE + "_" + "index_temp.txt"
+FL_CURRENT_OFFSETS = MODE + "_" + "currentoffset.txt"
+FL_OFFSETS = MODE + "_" + "offset.txt"
+FL_TOKEN_ID_MAP = MODE + "_" + "tokenmap.txt"
+FL_DOC_ID_MAP = MODE + "_" + "docmap.txt"
+FL_DOC_WORD_COUNT = MODE + "_" + "termcount.txt"
+FL_STOP_WORDS =  "stoplist.txt"
+DOC_COUNT_TO_PROCESS = 4000
+docDir = os.listdir(docBasePath)
+count =0
+hashTokenNameId = {}
+hashDocNameId = {}
+hashTokenIdDocBlock = {}
+hashCurrentFileOffset = {}
+hashGlobalFileOffset = {}
+hashTempFileOffset = {}
+hashDocIdWordCount = {}
+currentDocsToProcess = []
+stopWords = []
+MODEARRAY = ["STOPONLY","STEMONLY","STEMNSTOP","DEFAULT"]
+currentTermId = 0
+currentDocId = 0
+totalDocsRead = 0
+stemmer = english_stemmer.EnglishStemmer()
+def parsedocs(mode):
+    global count
+    global currentDocRangeStart
+    global currentDocsToProcess
+    global totalDocsRead
+    docLine = ""
+    docTermsMap = {}
+    textTagFound = False
+    for docFiles in docDir:
+            openfile = open(docBasePath + "\\" + docFiles,"r+")
+            for line in openfile:
+                    line = line.strip()
+                    if textTagFound:
+                        if not re.match('</TEXT>', line):
+                            docLine = docLine + " " + line
+                    if re.search('</DOCNO>', line):
+                        docno = (line.split('</DOCNO>')[0]).split('<DOCNO>')[1].strip()
+                        docLine = ""
+                    elif re.match('<TEXT>', line):
+                        textTagFound = True
+                    elif re.match('</TEXT>', line):
+                        textTagFound = False
+                    elif re.match('</DOC>', line):
+                        text = getTokenizedText(docLine)
+                        docTermsMap[docno] = text
+                        currentDocsToProcess.append(docno)
+                        if (len(currentDocsToProcess) % DOC_COUNT_TO_PROCESS == 0 or ()):
+                            processIndexing(docTermsMap,mode)
+                            totalDocsRead = totalDocsRead + len(docTermsMap)
+                            docTermsMap = {}
+    if (len(currentDocsToProcess) >0 and len(currentDocsToProcess) < DOC_COUNT_TO_PROCESS):
+        processIndexing(docTermsMap,mode)
+        totalDocsRead = totalDocsRead + len(docTermsMap)
+        docTermsMap = {}
+
+
+    print(totalDocsRead)
+    writeToFile(hashGlobalFileOffset,FL_OFFSETS)
+    writeToFile(hashTokenNameId,hashTokenNameId)
+    writeToFile(hashDocNameId,FL_DOC_ID_MAP)
+    writeToFile(hashTokenNameId,FL_TOKEN_ID_MAP)
+    writeToFile(hashDocIdWordCount,FL_DOC_WORD_COUNT)
+    deleteHelperFiles(outPath + "\\" + FL_CURRENT_OFFSETS)
+    deleteHelperFiles(outPath + "\\" + FL_CURRENT_INVERTED_INDEX)
+
+
+def deleteHelperFiles(filename):
+    os.remove(filename)
+
+def getTokenizedText(parsedText):
+    substituteText = re.sub("[-]", " ", parsedText)
+    substituteText = re.sub("[^(\\s\\w+(\\.?\\-?\\w+)\\s)*]", "", substituteText)
+    substituteText = re.sub("[\\(\\)_]", " ", substituteText)
+    substituteText = re.sub("[\\.]+", ".", substituteText)
+    substituteText = re.sub("[ ]+", " ", substituteText)
+    substituteText = re.sub("(\\. )", " ", substituteText)
+    substituteText = re.sub("(\\? )", " ", substituteText)
+    return str.lower(substituteText)
+
+def processIndexing(docTermsMap,mode):
+    global hashTokenIdDocBlock
+    hashTokenIdDocBlock = {}
+    print(totalDocsRead)
+    for docno in docTermsMap:
+        docTermList = filterTermsByMode(getdocTermListFromText(docTermsMap[docno]),mode)
+        createHashDocNameID(docno)
+        createHashDocIdWordCount(hashDocNameId[docno],len(docTermList))
+        createHashTokenNameID(docTermList)
+        createHashTokenIdDocBlockList(docTermList,docno)
+
+    writeToFile(hashTokenIdDocBlock,FL_CURRENT_INVERTED_INDEX)
+    writeToFile(hashCurrentFileOffset,FL_CURRENT_OFFSETS)
+    mergeIndices()
+
+def filterTermsByMode(termList,mode):
+    if mode == "DEFAULT":
+        return termList
+    elif mode == "STOPONLY":
+        return filterStopWords(termList)
+    elif mode == "STEMONLY":
+        return stemWords(termList)
+    else: # STEMNSTOP
+        tempList = filterStopWords(termList)
+        return stemWords(tempList)
+
+def filterStopWords(termList):
+    return (set(termList) - set(stopWords))
+
+def stemWords(termList):
+    tempList = []
+    for term in termList:
+        tempList.append(stemmer._stem_word(term))
+    return tempList
+def createHashTokenNameID(docTermList):
+    global currentTermId
+    global hashTokenNameId
+    for term in docTermList:
+        if (hashEmptyOrkeyNotExist(hashTokenNameId,trimTerm(term)) and trimTerm(term) != ''):
+            currentTermId += 1
+            hashTokenNameId[trimTerm(term)] = currentTermId
+
+def createHashDocNameID(docno):
+    global currentDocId
+    global hashDocNameId
+    if (hashEmptyOrkeyNotExist(hashDocNameId,docno)):
+        currentDocId +=1
+        hashDocNameId[docno] = currentDocId
+
+def createHashDocIdWordCount(docid,wcount):
+    global hashDocIdWordCount
+    if (hashEmptyOrkeyNotExist(hashDocIdWordCount,docid)):
+        hashDocIdWordCount[docid] = wcount
+
+
+def createHashCurrentFileOffset(key,offsetMapOb):
+    global hashCurrentFileOffset
+    if (hashEmptyOrkeyNotExist(hashCurrentFileOffset,key)):
+        hashCurrentFileOffset[key] = offsetMapOb
+
+
+def createHashTempFileOffset(key,offsetMapOb):
+    global hashTempFileOffset
+    if (hashEmptyOrkeyNotExist(hashTempFileOffset,key)):
+        hashTempFileOffset[key] = offsetMapOb
+
+def createHashTokenIdDocBlockList (docTermList,docno):
+    global hashTokenNameId
+    global hashDocNameId
+    global hashTokenIdDocBlock
+    termPos = 0
+    for term in docTermList:
+        if trimTerm(term)!= '':
+            currentTokenId = hashTokenNameId[trimTerm(term)]
+            #print(currentTokenId)
+            termPos+=1
+            if (hashEmptyOrkeyNotExist(hashTokenIdDocBlock,currentTokenId)):
+                #docBlock = DocumentBlock(hashDocNameId[docno],[termPos])
+                hashTokenIdDocBlock[currentTokenId] = {hashDocNameId[docno] : [termPos]}
+            else :
+                if (hashEmptyOrkeyNotExist(hashTokenIdDocBlock[currentTokenId],hashDocNameId[docno])):
+                    hashTokenIdDocBlock[currentTokenId][hashDocNameId[docno]] = [termPos]
+                else:
+                    hashTokenIdDocBlock[currentTokenId][hashDocNameId[docno]].append(termPos)
+
+def hashEmptyOrkeyNotExist(hasht,key):
+    return ((not bool(hasht)) or  (not (hasht.__contains__(key))))
+
+
+def hashEmpty (hasht):
+    return (not bool(hasht))
+
+def getdocTermListFromText(text):
+    docTermList = text.split()
+    return docTermList
+
+
+def trimTerm(term):
+    term = term.lstrip(".").rstrip(".")
+    return term
+
+
+def printAllDs():
+    print(hashDocNameId)
+    print(hashTokenNameId)
+    print(hashTokenIdDocBlock)
+    print(hashCurrentFileOffset)
+
+def writeToFile(hasht,fileName):
+    global hashCurrentFileOffset
+    global hashTempFileOffset
+    global hashGlobalFileOffset
+    if(fileName == FL_CURRENT_OFFSETS):
+        f = open(outPath +"\\" + FL_CURRENT_OFFSETS, "w")
+        for key in hasht:
+            contentToWrite = str(key) + " " + str(hasht[key].startPos) + \
+                             " " + str(hasht[key].bytesToRead)
+            f.write(contentToWrite + "\n")
+        f.close()
+    if(fileName == FL_OFFSETS):
+        f = open(outPath +"\\" + FL_OFFSETS, "w")
+        for key in hasht:
+            contentToWrite = str(key) + " " + str(hasht[key].startPos) + \
+                             " " + str(hasht[key].bytesToRead)
+            f.write(contentToWrite + "\n")
+        f.close()
+
+    if(fileName == FL_TOKEN_ID_MAP):
+        f = open(outPath +"\\" + FL_TOKEN_ID_MAP, "w")
+        for key in hasht:
+            contentToWrite = str(key) + " " + str(hasht[key])
+            f.write(contentToWrite + "\n")
+        f.close()
+
+    if(fileName == FL_DOC_ID_MAP):
+        f = open(outPath +"\\" + FL_DOC_ID_MAP, "w")
+        for key in hasht:
+            contentToWrite = str(key) + " " + str(hasht[key])
+            f.write(contentToWrite + "\n")
+        f.close()
+
+    if(fileName == FL_DOC_WORD_COUNT):
+        f = open(outPath +"\\" + FL_DOC_WORD_COUNT, "w")
+        print(len(hasht))
+        for key in hasht:
+            contentToWrite = str(key) + " " + str(hasht[key])
+            print(contentToWrite)
+            f.write(contentToWrite + "\n")
+        f.close()
+
+    elif(fileName == FL_CURRENT_INVERTED_INDEX):
+        hashCurrentFileOffset = {}
+        f = open(outPath +"\\" + FL_CURRENT_INVERTED_INDEX, "w")
+        contentToWrite = ""
+        for key in hasht:
+            contentToWrite = ""
+            #print(str(key))
+            contentToWrite = contentToWrite + str(key) + ":"
+            for keydocs in hasht[key]:
+                contentToWrite = contentToWrite + str(keydocs) + "-"
+                for pos in hasht[key][keydocs]:
+                    contentToWrite = contentToWrite + " " + str(pos)
+                contentToWrite = contentToWrite + ";"
+            offsetMapOb = OffsetMap(f.tell(),sys.getsizeof(contentToWrite))
+            #print(contentToWrite + "\n")
+            f.write(contentToWrite + "\n")
+            createHashCurrentFileOffset(key,offsetMapOb)
+        f.close()
+    elif(fileName == FL_INVERTED_INDEX):
+        f = open(outPath +"\\" + FL_INVERTED_INDEX, "a")
+        if(f.tell() == 0):
+            f_cii = open(outPath +"\\" + FL_CURRENT_INVERTED_INDEX, "r+")
+            f.write(f_cii.read())
+            f_cii.close()
+            f.close()
+        else:
+            f.close()
+            f_cii = open(outPath +"\\" + FL_CURRENT_INVERTED_INDEX, "r+")
+            f_ii = open(outPath +"\\" + FL_INVERTED_INDEX, "r+")
+            f_ii_temp = open(outPath +"\\" + FL_INVERTED_INDEX_TEMP, "a")
+            firstHash = hashGlobalFileOffset
+            secondHash = hashCurrentFileOffset
+            for token in hashTokenNameId:
+                whichHash = checkExistence(firstHash,secondHash,hashTokenNameId[token])
+                if (whichHash == "first"):
+                    invertedIndexTerm = getLineFromFileWithOffset(f_ii,firstHash[hashTokenNameId[token]].startPos,
+                                              firstHash[hashTokenNameId[token]].bytesToRead)
+                    offMapOb = OffsetMap(f_ii_temp.tell(),sys.getsizeof(invertedIndexTerm))
+                    createHashTempFileOffset(hashTokenNameId[token],offMapOb)
+                    f_ii_temp.write(invertedIndexTerm)
+                elif (whichHash == "second"):
+                    invertedIndexTerm = getLineFromFileWithOffset(f_cii,secondHash[hashTokenNameId[token]].startPos,
+                                              secondHash[hashTokenNameId[token]].bytesToRead)
+                    offMapOb = OffsetMap(f_ii_temp.tell(),sys.getsizeof(invertedIndexTerm))
+                    createHashTempFileOffset(hashTokenNameId[token],offMapOb)
+                    f_ii_temp.write(invertedIndexTerm)
+                elif (whichHash == "both"):
+                    invertedIndexTermFirst = getLineFromFileWithOffset(f_ii,firstHash[hashTokenNameId[token]].startPos,
+                                              firstHash[hashTokenNameId[token]].bytesToRead)
+                    invertedIndexTermSecond = getLineFromFileWithOffset(f_cii,secondHash[hashTokenNameId[token]].startPos,
+                                              secondHash[hashTokenNameId[token]].bytesToRead)
+                    #commaSplit = invertedIndexTermFirst.split(",")
+                    colonSplitSecond = invertedIndexTermSecond.split(":")
+                    finalOutString = invertedIndexTermFirst.rstrip("\n")  + colonSplitSecond[1]
+                    offMapOb = OffsetMap(f_ii_temp.tell(),sys.getsizeof(finalOutString))
+                    createHashTempFileOffset(hashTokenNameId[token],offMapOb)
+                    f_ii_temp.write(finalOutString)
+                else:
+                    x=0
+
+            f_ii.close()
+            f_cii.close()
+            f_ii_temp.close()
+            hashGlobalFileOffset = copy.deepcopy(hashTempFileOffset)
+            hashCurrentFileOffset = {}
+            hashTempFileOffset = {}
+            if(f_ii.closed):
+                os.remove(outPath + "\\" + FL_INVERTED_INDEX)
+                os.rename(outPath + "\\" + FL_INVERTED_INDEX_TEMP,outPath + "\\" + FL_INVERTED_INDEX)
+
+
+def getLineFromFileWithOffset(file,startPos,bytesToRead):
+    file.seek(startPos)
+    return file.readline(bytesToRead)
+
+
+def mergeIndices():
+    global  hashGlobalFileOffset
+    global  hashCurrentFileOffset
+    if(hashEmpty(hashGlobalFileOffset)):
+        hashGlobalFileOffset = copy.deepcopy(hashCurrentFileOffset)
+    writeToFile({},FL_INVERTED_INDEX)
+
+
+def checkExistence(first,second,token):
+    if(first.__contains__(token) and second.__contains__(token)):
+        return "both"
+    elif (first.__contains__(token)):
+        return "first"
+    elif (second.__contains__(token)):
+        return "second"
+    else:
+        return "none"
+
+def getStringOfNumberArray(intArray):
+    outString = ""
+    for num in intArray:
+        outString = outString + str(num) + " "
+    return outString.lstrip(" ").rstrip(" ")
+
+def loadStopWords():
+    global stopWords
+    ignoreWordsFile = open(strBasePath + "\\" + FL_STOP_WORDS,"r+")
+    stopWords = ignoreWordsFile.read().splitlines()
+    ignoreWordsFile.close()
+
+def main():
+    loadStopWords()
+    for mode in MODEARRAY:
+        resetMemoryObs()
+        setFileNames(mode)
+        parsedocs(mode)
+
+
+def setFileNames(mode):
+    global FL_CURRENT_INVERTED_INDEX
+    global FL_INVERTED_INDEX
+    global FL_INVERTED_INDEX_TEMP
+    global FL_CURRENT_OFFSETS
+    global FL_OFFSETS
+    global FL_TOKEN_ID_MAP
+    global FL_DOC_ID_MAP
+    global FL_DOC_WORD_COUNT
+
+    FL_CURRENT_INVERTED_INDEX = mode + "_" + "currentindex.txt"
+    FL_INVERTED_INDEX = mode+ "_" + "index.txt"
+    FL_INVERTED_INDEX_TEMP = mode + "_" + "index_temp.txt"
+    FL_CURRENT_OFFSETS = mode + "_" + "currentoffset.txt"
+    FL_OFFSETS = mode + "_" + "offset.txt"
+    FL_TOKEN_ID_MAP = mode + "_" + "tokenmap.txt"
+    FL_DOC_ID_MAP = mode + "_" + "docmap.txt"
+    FL_DOC_WORD_COUNT = mode + "_" + "termcount.txt"
+
+def resetMemoryObs():
+    global hashTokenNameId
+    global hashDocNameId
+    global hashTokenIdDocBlock
+    global hashCurrentFileOffset
+    global hashGlobalFileOffset
+    global hashTempFileOffset
+    global currentDocsToProcess
+    global currentTermId
+    global currentDocId
+    global totalDocsRead
+    global  hashDocIdWordCount
+
+    hashTokenNameId = {}
+    hashDocNameId = {}
+    hashTokenIdDocBlock = {}
+    hashCurrentFileOffset = {}
+    hashGlobalFileOffset = {}
+    hashTempFileOffset = {}
+    hashDocIdWordCount = {}
+    currentDocsToProcess = []
+    currentTermId = 0
+    currentDocId = 0
+    totalDocsRead = 0
+
+
+main()
+
