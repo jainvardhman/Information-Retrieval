@@ -1,5 +1,5 @@
 import os
-import re
+import re#same
 from elasticsearch import Elasticsearch
 from os import path
 strBasePath = "C:\\Users\\Vardhman\\Downloads\\AP89_DATA\\AP_DATA\\ap89_collection";
