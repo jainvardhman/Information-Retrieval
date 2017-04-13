@@ -1,5 +1,5 @@
 __author__ = 'Vardhman'
-//this is for test also
+//this is for test also testing from dev  
 import math
 
 INPUT_PATH = "C:\\Vardhman-Drive\\Courses\\Information-Retrieval\\ir-assgn-4"
