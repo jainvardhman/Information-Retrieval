@@ -1,5 +1,6 @@
 __author__ = 'Vardhman'
 import math
+#test commit
 
 INPUT_PATH = "C:\\Vardhman-Drive\\Courses\\Information-Retrieval\\ir-assgn-4"
 INPUT_FILE = "wt2g_inlinks.txt"
