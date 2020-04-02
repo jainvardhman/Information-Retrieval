@@ -12,7 +12,7 @@ RANK_MAP = {}
 VAL_AT_ARRAY = [5,10,20,50,100]
 VAL_TYPE = ["P_AT_K","R_AT_K","F_AT_K","NDCG","AVG_PRECISION","R_PRECISION"]
 PREC_AT_AVG = {}
-REC_AT_AVG = {}
+REC_AT_AVG = {}//farzi commit
 F1_AT_AVG = {}
 
 def main():
